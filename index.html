@@ -141,6 +141,14 @@
                 <path d="M6 12v5c3 0 6-1 6-1"></path>
             </IconBase>
         );
+        
+        const ExternalLink = (props) => (
+            <IconBase {...props}>
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+            </IconBase>
+        );
 
         // --- Main Application ---
         const DEFAULT_CARDS = [
@@ -234,6 +242,11 @@
                     window.speechSynthesis.speak(utterance);
                 }
             };
+            
+            const openCambridge = (word, e) => {
+                if (e) e.stopPropagation();
+                window.open(`https://dictionary.cambridge.org/dictionary/english/${word.toLowerCase()}`, '_blank');
+            };
 
             const handleNext = () => {
                 setIsFlipped(false);
@@ -318,8 +331,8 @@
                     const newCard = {
                         id: Date.now(),
                         word: formData.word,
-                        ipa: formData.ipa,
-                        partOfSpeech: formData.partOfSpeech,
+                        ipa: formData.ipa, 
+                        partOfSpeech: formData.partOfSpeech, 
                         meaning: formData.meaning,
                         sentences: newSentences
                     };
@@ -534,12 +547,22 @@
                                                             <p className="text-slate-400 font-mono text-lg mb-6">{currentCard.ipa}</p>
                                                         )}
                                                         
-                                                        <button 
-                                                            onClick={(e) => speak(currentCard.word, e)}
-                                                            className="p-4 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-600 hover:text-white transition-all transform active:scale-95 shadow-sm"
-                                                        >
-                                                            <Volume2 size={32} />
-                                                        </button>
+                                                        <div className="flex gap-4 items-center">
+                                                            <button 
+                                                                onClick={(e) => speak(currentCard.word, e)}
+                                                                className="p-4 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-600 hover:text-white transition-all transform active:scale-95 shadow-sm"
+                                                                title="聽機器發音 (Local)"
+                                                            >
+                                                                <Volume2 size={32} />
+                                                            </button>
+                                                            <button 
+                                                                onClick={(e) => openCambridge(currentCard.word, e)}
+                                                                className="p-4 bg-white text-slate-600 border border-slate-200 rounded-full hover:bg-indigo-50 hover:text-indigo-600 transition-all transform active:scale-95 shadow-sm"
+                                                                title="前往 Cambridge Dictionary 聽發音"
+                                                            >
+                                                                <ExternalLink size={32} />
+                                                            </button>
+                                                        </div>
                                                         <p className="text-slate-400 text-sm mt-4 font-medium">點擊翻面</p>
                                                     </div>
 
@@ -580,12 +603,18 @@
                                                         )}
                                                     </div>
                                                     
-                                                    <div className="w-full flex justify-center pt-4">
+                                                    <div className="w-full flex justify-center pt-4 gap-3">
                                                         <button 
                                                             onClick={(e) => speak(currentCard.word, e)}
                                                             className="text-indigo-200 hover:text-white transition-colors flex items-center gap-2"
                                                         >
-                                                            <Volume2 size={18} /> <span className="text-xs">再次發音</span>
+                                                            <Volume2 size={18} /> <span className="text-xs">機器發音</span>
+                                                        </button>
+                                                        <button 
+                                                            onClick={(e) => openCambridge(currentCard.word, e)}
+                                                            className="text-indigo-200 hover:text-white transition-colors flex items-center gap-2"
+                                                        >
+                                                            <ExternalLink size={18} /> <span className="text-xs">Cambridge 發音</span>
                                                         </button>
                                                     </div>
                                                 </>
