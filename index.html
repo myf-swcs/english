@@ -37,6 +37,14 @@
         .animate-fade-in {
             animation: fadeIn 0.3s ease-out forwards;
         }
+        
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop-in {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100">
@@ -44,7 +52,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
 
         // --- Icons Components (SVG) ---
         const IconBase = ({ children, size = 24, className = "" }) => (
@@ -150,6 +158,39 @@
             </IconBase>
         );
 
+        const ClipboardList = (props) => (
+            <IconBase {...props}>
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                <path d="M9 12h6"></path>
+                <path d="M9 16h6"></path>
+                <path d="M9 8h.01"></path>
+            </IconBase>
+        );
+
+        const CheckCircle = (props) => (
+            <IconBase {...props}>
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </IconBase>
+        );
+
+        const XCircle = (props) => (
+            <IconBase {...props}>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </IconBase>
+        );
+
+        const RefreshCcw = (props) => (
+            <IconBase {...props}>
+                <polyline points="1 4 1 10 7 10"></polyline>
+                <polyline points="23 20 23 14 17 14"></polyline>
+                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+            </IconBase>
+        );
+
         // --- Main Application ---
         const DEFAULT_CARDS = [
             {
@@ -189,13 +230,29 @@
             const [cards, setCards] = useState(DEFAULT_CARDS);
             const [isLoaded, setIsLoaded] = useState(false);
             
+            // Mode Management: 'flashcard' | 'list' | 'edit' | 'quiz' | 'result'
+            const [mode, setMode] = useState('flashcard');
+            
             const [currentIndex, setCurrentIndex] = useState(0);
             const [isFlipped, setIsFlipped] = useState(false);
-            const [isEditing, setIsEditing] = useState(false);
             const [editingId, setEditingId] = useState(null);
-            const [showList, setShowList] = useState(false);
             const [errorMsg, setErrorMsg] = useState('');
 
+            // Review Mode State
+            const [isReviewing, setIsReviewing] = useState(false);
+
+            // Quiz State
+            const [quizState, setQuizState] = useState({
+                queue: [],
+                current: 0,
+                score: 0,
+                wrongIds: [],
+                selectedOptionIndex: null,
+                isAnswered: false,
+                options: []
+            });
+
+            // Form State
             const [formData, setFormData] = useState({
                 word: '',
                 ipa: '',
@@ -204,6 +261,14 @@
                 sentenceEn: '',
                 sentenceCn: ''
             });
+
+            // Computed Active Cards (Normal or Review Subset)
+            const activeCards = useMemo(() => {
+                if (isReviewing) {
+                    return cards.filter(c => quizState.wrongIds.includes(c.id));
+                }
+                return cards;
+            }, [cards, isReviewing, quizState.wrongIds]);
 
             // Load from LocalStorage
             useEffect(() => {
@@ -225,12 +290,16 @@
                 }
             }, [cards, isLoaded]);
 
-            // Ensure index is valid when cards change
+            // Ensure index is valid when activeCards change
             useEffect(() => {
-                if (currentIndex >= cards.length && cards.length > 0) {
-                    setCurrentIndex(0);
+                if (activeCards.length === 0 && !isReviewing) {
+                     // Wait for UI to handle empty state
+                } else if (currentIndex >= activeCards.length) {
+                    setCurrentIndex(Math.max(0, activeCards.length - 1));
                 }
-            }, [cards.length]);
+            }, [activeCards.length, isReviewing]);
+
+            // --- Logic Helpers ---
 
             const speak = (text, e) => {
                 if (e) e.stopPropagation();
@@ -248,17 +317,97 @@
                 window.open(`https://dictionary.cambridge.org/dictionary/english/${word.toLowerCase()}`, '_blank');
             };
 
+            const generateOptions = (correctCard, allCards) => {
+                // Ensure unique distractors
+                const others = allCards.filter(c => c.id !== correctCard.id);
+                // Shuffle others and pick 3
+                const distractors = others.sort(() => 0.5 - Math.random()).slice(0, 3);
+                // Combine and shuffle
+                const options = [correctCard, ...distractors].sort(() => 0.5 - Math.random());
+                return options;
+            };
+
+            const startQuiz = () => {
+                if (cards.length < 1) {
+                    alert("請至少建立 1 張單字卡才能開始測驗！");
+                    return;
+                }
+                const queue = [...cards].sort(() => 0.5 - Math.random());
+                setQuizState({
+                    queue: queue,
+                    current: 0,
+                    score: 0,
+                    wrongIds: [],
+                    selectedOptionIndex: null,
+                    isAnswered: false,
+                    options: generateOptions(queue[0], cards)
+                });
+                setMode('quiz');
+                setIsReviewing(false);
+            };
+
+            const handleQuizOptionClick = (option, index) => {
+                if (quizState.isAnswered) return;
+
+                const currentCard = quizState.queue[quizState.current];
+                const isCorrect = option.id === currentCard.id;
+                
+                // Track wrong IDs
+                const newWrongIds = isCorrect ? quizState.wrongIds : [...quizState.wrongIds, currentCard.id];
+
+                setQuizState(prev => ({
+                    ...prev,
+                    selectedOptionIndex: index,
+                    isAnswered: true,
+                    score: isCorrect ? prev.score + 1 : prev.score,
+                    wrongIds: newWrongIds
+                }));
+
+                // Auto advance
+                setTimeout(() => {
+                    if (quizState.current + 1 >= quizState.queue.length) {
+                        // Finish Quiz
+                        setQuizState(prev => ({ ...prev, wrongIds: newWrongIds })); // Ensure state matches
+                        setMode('result');
+                    } else {
+                        const nextIndex = quizState.current + 1;
+                        const nextCard = quizState.queue[nextIndex];
+                        setQuizState(prev => ({
+                            ...prev,
+                            current: nextIndex,
+                            selectedOptionIndex: null,
+                            isAnswered: false,
+                            wrongIds: newWrongIds,
+                            options: generateOptions(nextCard, cards)
+                        }));
+                    }
+                }, 1200);
+            };
+
+            const startReview = () => {
+                setIsReviewing(true);
+                setMode('flashcard');
+                setCurrentIndex(0);
+                setIsFlipped(false);
+            };
+
+            const exitReview = () => {
+                setIsReviewing(false);
+                setCurrentIndex(0);
+                setIsFlipped(false);
+            };
+
             const handleNext = () => {
                 setIsFlipped(false);
                 setTimeout(() => {
-                    setCurrentIndex((prev) => (prev + 1) % cards.length);
+                    setCurrentIndex((prev) => (prev + 1) % activeCards.length);
                 }, 250);
             };
 
             const handlePrev = () => {
                 setIsFlipped(false);
                 setTimeout(() => {
-                    setCurrentIndex((prev) => (prev - 1 + cards.length) % cards.length);
+                    setCurrentIndex((prev) => (prev - 1 + activeCards.length) % activeCards.length);
                 }, 250);
             };
 
@@ -266,13 +415,8 @@
                 if (confirm("確定要刪除這張卡片嗎？")) {
                     const newCards = cards.filter(c => c.id !== id);
                     setCards(newCards);
-                    
-                    if (currentIndex >= newCards.length) {
-                        setCurrentIndex(Math.max(0, newCards.length - 1));
-                    }
-                    
                     if (newCards.length === 0) {
-                        setIsEditing(true);
+                        setMode('edit');
                         setEditingId(null);
                         resetForm();
                     }
@@ -295,8 +439,7 @@
                     setEditingId(null);
                     resetForm();
                 }
-                setIsEditing(true);
-                setShowList(false);
+                setMode('edit');
             };
 
             const resetForm = () => {
@@ -337,37 +480,49 @@
                         sentences: newSentences
                     };
                     setCards([...cards, newCard]);
-                    setCurrentIndex(cards.length);
+                    // If reviewing, this new card won't show up until exit, which is logical
+                    if (!isReviewing) setCurrentIndex(cards.length); 
                 }
 
-                setIsEditing(false);
+                setMode('flashcard');
                 setEditingId(null);
                 resetForm();
             };
 
             if (!isLoaded) return null;
 
-            if (cards.length === 0 && !isEditing) {
-                // If loaded but empty, force edit mode safely
-                setTimeout(() => setIsEditing(true), 0);
+            if (cards.length === 0 && mode !== 'edit') {
+                setTimeout(() => setMode('edit'), 0);
             }
 
-            const currentCard = cards[currentIndex];
+            const currentCard = activeCards[currentIndex];
+
+            // --- Render Logic ---
 
             return (
-                <div className="min-h-screen flex flex-col items-center py-8 px-4">
+                <div className="min-h-screen flex flex-col items-center py-8 px-4 bg-slate-50">
                     
                     {/* Header */}
-                    <header className="w-full max-w-md flex justify-between items-center mb-8">
-                        <div className="flex items-center gap-2 text-indigo-600">
+                    <header className="w-full max-w-md flex justify-between items-center mb-6">
+                        <div className="flex items-center gap-2 text-indigo-600 cursor-pointer" onClick={() => {setMode('flashcard'); setIsReviewing(false);}}>
                             <GraduationCap size={32} />
                             <h1 className="text-2xl font-bold tracking-tight">VocabMaster</h1>
                         </div>
                         <div className="flex gap-2">
+                            {mode === 'flashcard' && !isReviewing && (
+                                <button 
+                                    onClick={startQuiz}
+                                    className="p-2 rounded-full hover:bg-white hover:text-indigo-600 hover:shadow-sm text-slate-500 transition-all"
+                                    title="開始測驗"
+                                >
+                                    <ClipboardList size={22} />
+                                </button>
+                            )}
                             <button 
-                                onClick={() => setShowList(!showList)}
-                                className="p-2 rounded-full hover:bg-white hover:shadow-sm text-slate-500 transition-all"
+                                onClick={() => setMode(mode === 'list' ? 'flashcard' : 'list')}
+                                className={`p-2 rounded-full hover:bg-white hover:shadow-sm transition-all ${mode === 'list' ? 'text-indigo-600 bg-white shadow-sm' : 'text-slate-500'}`}
                                 title="單字列表"
+                                disabled={mode === 'quiz'}
                             >
                                 <BookOpen size={20} />
                             </button>
@@ -375,24 +530,117 @@
                                 onClick={() => startEditing(null)}
                                 className="p-2 rounded-full bg-indigo-600 text-white shadow-md hover:bg-indigo-700 hover:scale-105 transition-all"
                                 title="新增卡片"
+                                disabled={mode === 'quiz'}
                             >
                                 <Plus size={20} />
                             </button>
                         </div>
                     </header>
 
+                    {/* Review Mode Banner */}
+                    {isReviewing && mode === 'flashcard' && (
+                        <div className="w-full max-w-md bg-red-50 border border-red-100 p-3 rounded-xl mb-4 flex justify-between items-center animate-fade-in">
+                            <div className="flex items-center gap-2 text-red-600">
+                                <XCircle size={20} />
+                                <span className="font-bold text-sm">複習錯誤題目 ({activeCards.length})</span>
+                            </div>
+                            <button 
+                                onClick={exitReview}
+                                className="text-xs font-bold bg-white text-slate-500 px-3 py-1.5 rounded-lg border border-slate-200 hover:text-indigo-600"
+                            >
+                                退出複習
+                            </button>
+                        </div>
+                    )}
+
                     {/* Main Content Area */}
-                    <main 
-                        className="w-full max-w-md relative"
-                        style={{ perspective: '1000px' }}
-                    >
+                    <main className="w-full max-w-md relative perspective-1000">
                         
-                        {isEditing ? (
+                        {mode === 'quiz' ? (
+                            // --- Quiz Mode ---
+                            <div className="bg-white rounded-3xl shadow-xl p-8 border-b-4 border-indigo-100 animate-pop-in min-h-[500px] flex flex-col">
+                                <div className="flex justify-between items-center text-slate-400 font-bold text-sm mb-6">
+                                    <span>Question {quizState.current + 1} / {quizState.queue.length}</span>
+                                    <span className="text-indigo-600">Score: {quizState.score}</span>
+                                </div>
+
+                                <div className="flex-1 flex flex-col items-center justify-center mb-8">
+                                    <h2 className="text-4xl font-bold text-slate-800 text-center mb-2">{quizState.queue[quizState.current].word}</h2>
+                                    <p className="text-slate-400 font-mono text-lg">{quizState.queue[quizState.current].ipa}</p>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {quizState.options.map((opt, idx) => {
+                                        let btnClass = "w-full p-4 rounded-xl text-left font-bold transition-all border-2 ";
+                                        const isSelected = quizState.selectedOptionIndex === idx;
+                                        const isCorrect = opt.id === quizState.queue[quizState.current].id;
+                                        
+                                        if (quizState.isAnswered) {
+                                            if (isCorrect) btnClass += "bg-green-100 border-green-500 text-green-700";
+                                            else if (isSelected) btnClass += "bg-red-100 border-red-500 text-red-700";
+                                            else btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-50";
+                                        } else {
+                                            btnClass += "bg-white border-slate-100 text-slate-600 hover:border-indigo-500 hover:text-indigo-600 hover:shadow-md active:scale-98";
+                                        }
+
+                                        return (
+                                            <button 
+                                                key={idx}
+                                                onClick={() => handleQuizOptionClick(opt, idx)}
+                                                className={btnClass}
+                                                disabled={quizState.isAnswered}
+                                            >
+                                                {opt.meaning}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                        ) : mode === 'result' ? (
+                            // --- Quiz Result ---
+                            <div className="bg-white rounded-3xl shadow-xl p-8 border-b-4 border-indigo-100 animate-pop-in min-h-[500px] flex flex-col items-center justify-center text-center">
+                                <div className="w-24 h-24 rounded-full bg-indigo-50 flex items-center justify-center mb-6 text-indigo-600">
+                                    {quizState.score === quizState.queue.length ? <CheckCircle size={48} /> : <ClipboardList size={48} />}
+                                </div>
+                                
+                                <h2 className="text-3xl font-bold text-slate-800 mb-2">測驗完成！</h2>
+                                <p className="text-slate-500 mb-8">
+                                    你答對了 <span className="text-indigo-600 font-bold text-xl">{quizState.score}</span> / {quizState.queue.length} 題
+                                </p>
+
+                                <div className="space-y-3 w-full">
+                                    {quizState.wrongIds.length > 0 && (
+                                        <button 
+                                            onClick={startReview}
+                                            className="w-full py-4 bg-red-50 text-red-600 rounded-xl font-bold hover:bg-red-100 transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <XCircle size={20} /> 複習錯誤題目 ({quizState.wrongIds.length})
+                                        </button>
+                                    )}
+                                    
+                                    <button 
+                                        onClick={startQuiz}
+                                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all flex items-center justify-center gap-2"
+                                    >
+                                        <RefreshCcw size={20} /> 再測驗一次
+                                    </button>
+                                    
+                                    <button 
+                                        onClick={() => {setMode('flashcard'); setIsReviewing(false);}}
+                                        className="w-full py-4 bg-white text-slate-500 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 transition-all"
+                                    >
+                                        回到單字卡
+                                    </button>
+                                </div>
+                            </div>
+
+                        ) : mode === 'edit' ? (
                             // --- Add/Edit Card Form ---
                             <div className="bg-white rounded-3xl shadow-xl p-6 border border-indigo-50 animate-fade-in">
                                 <div className="flex justify-between items-center mb-6">
                                     <h2 className="text-xl font-bold text-slate-700">{editingId ? '編輯單字卡' : '新增單字卡'}</h2>
-                                    <button onClick={() => cards.length > 0 && setIsEditing(false)} className="text-slate-400 hover:text-slate-600">
+                                    <button onClick={() => {setMode('flashcard'); setIsReviewing(false);}} className="text-slate-400 hover:text-slate-600">
                                         <X size={24} />
                                     </button>
                                 </div>
@@ -474,19 +722,20 @@
                                     </button>
                                 </div>
                             </div>
-                        ) : showList ? (
+
+                        ) : mode === 'list' ? (
                             // --- List View ---
                             <div className="bg-white rounded-3xl shadow-xl border border-indigo-50 overflow-hidden h-[500px] flex flex-col animate-fade-in">
                                 <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-700">單字列表 ({cards.length})</h3>
-                                    <button onClick={() => setShowList(false)} className="text-indigo-600 text-sm font-semibold">返回卡片</button>
+                                    <button onClick={() => setMode('flashcard')} className="text-indigo-600 text-sm font-semibold">返回卡片</button>
                                 </div>
                                 <div className="overflow-y-auto flex-1 p-2">
                                     {cards.map((card, idx) => (
                                         <div 
                                             key={card.id} 
-                                            onClick={() => { setCurrentIndex(idx); setShowList(false); setIsFlipped(false); }}
-                                            className={`p-3 mb-2 rounded-xl border cursor-pointer transition-all hover:bg-indigo-50 flex justify-between items-center ${currentIndex === idx ? 'border-indigo-500 bg-indigo-50' : 'border-slate-100 bg-white'}`}
+                                            onClick={() => { setMode('flashcard'); setCurrentIndex(idx); setIsFlipped(false); setIsReviewing(false); }}
+                                            className="p-3 mb-2 rounded-xl border cursor-pointer transition-all hover:bg-indigo-50 border-slate-100 bg-white flex justify-between items-center"
                                         >
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2">
@@ -513,8 +762,9 @@
                                     ))}
                                 </div>
                             </div>
+
                         ) : (
-                            // --- Flashcard View ---
+                            // --- Flashcard View (Default) ---
                             <>
                                 <div 
                                     className="relative h-[480px] w-full cursor-pointer group"
@@ -533,7 +783,7 @@
                                             className="absolute w-full h-full bg-white rounded-3xl shadow-xl border-b-4 border-indigo-100 p-8 flex flex-col items-center justify-center"
                                             style={{ backfaceVisibility: 'hidden' }}
                                         >
-                                            {currentCard && (
+                                            {currentCard ? (
                                                 <>
                                                     <span className="absolute top-6 right-6 px-3 py-1 bg-indigo-50 text-indigo-600 text-sm font-bold rounded-full uppercase tracking-wider">
                                                         {currentCard.partOfSpeech}
@@ -567,10 +817,15 @@
                                                     </div>
 
                                                     <div className="w-full flex justify-between items-center text-slate-300 text-sm font-semibold">
-                                                        <span>Card {currentIndex + 1} / {cards.length}</span>
+                                                        <span>{isReviewing ? 'Wrong Answer' : 'Card'} {currentIndex + 1} / {activeCards.length}</span>
                                                         <RotateCw size={16} />
                                                     </div>
                                                 </>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                                                    <p>沒有卡片顯示</p>
+                                                    {isReviewing && <button onClick={exitReview} className="mt-4 text-indigo-600 underline">退出複習模式</button>}
+                                                </div>
                                             )}
                                         </div>
 
@@ -628,7 +883,8 @@
                                 <div className="flex justify-between items-center mt-8 px-4">
                                     <button 
                                         onClick={handlePrev}
-                                        className="p-4 bg-white text-slate-600 rounded-2xl shadow-md hover:bg-slate-50 hover:scale-105 transition-all disabled:opacity-50"
+                                        className="p-4 bg-white text-slate-600 rounded-2xl shadow-md hover:bg-slate-50 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={activeCards.length <= 1}
                                     >
                                         <ChevronLeft size={24} />
                                     </button>
@@ -638,21 +894,24 @@
                                             onClick={() => currentCard && startEditing(currentCard)}
                                             className="p-3 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-full transition-colors"
                                             title="編輯"
+                                            disabled={isReviewing} // Disable edit in review mode to prevent sync issues
                                         >
-                                            <Edit2 size={20} />
+                                            <Edit2 size={20} className={isReviewing ? "opacity-50" : ""} />
                                         </button>
                                         <button 
                                             onClick={() => currentCard && handleDelete(currentCard.id)}
                                             className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
                                             title="刪除"
+                                            disabled={isReviewing} // Disable delete in review mode
                                         >
-                                            <Trash2 size={20} />
+                                            <Trash2 size={20} className={isReviewing ? "opacity-50" : ""} />
                                         </button>
                                     </div>
 
                                     <button 
                                         onClick={handleNext}
-                                        className="p-4 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all"
+                                        className="p-4 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={activeCards.length <= 1}
                                     >
                                         <ChevronRight size={24} />
                                     </button>
